@@ -13,9 +13,12 @@ return new class extends Migration
     {
         Schema::create('products', function (Blueprint $table) {
             $table->id();
+            $table->string('discogs_id')->nullable()->unique();
             $table->string('name');
-            $table->text('description');
-            $table->decimal('price', 8, 2);
+            $table->string('artist')->nullable();
+            $table->text('description')->nullable();
+            $table->string('cover_url')->nullable();
+            $table->decimal('price', 8, 2)->default(0);
             $table->timestamps();
         });
     }

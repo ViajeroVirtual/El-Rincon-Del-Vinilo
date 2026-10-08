@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    'discogs' => [
+        'key' => env('DISCOGS_KEY'),
+        'secret' => env('DISCOGS_SECRET'),
+    ],
+
 ];
