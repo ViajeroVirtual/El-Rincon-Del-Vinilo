@@ -20,11 +20,34 @@ class ShopController extends Controller
         
         $page = $request->get('page', 1);
         
+        // Detectar país por el idioma del navegador para priorizar la región
+        $lang = substr($request->server('HTTP_ACCEPT_LANGUAGE', 'es'), 0, 2);
+        $countryMap = [
+            'es' => 'Spain',
+            'en' => 'UK', 
+            'fr' => 'France',
+            'it' => 'Italy',
+            'de' => 'Germany',
+            'pt' => 'Brazil'
+        ];
+        $country = $countryMap[$lang] ?? 'US';
+        $regionMap = [
+            'Spain' => 'de España',
+            'UK' => 'del Reino Unido',
+            'France' => 'de Francia',
+            'Italy' => 'de Italia',
+            'Germany' => 'de Alemania',
+            'Brazil' => 'de Brasil',
+            'US' => 'de Estados Unidos'
+        ];
+        $regionName = $regionMap[$country] ?? 'Internacionales';
+
         $params = [
             'type' => 'release',
             'format' => 'vinyl',
             'per_page' => 9,
             'page' => $page,
+            'country' => $country, // Añadido para priorizar la región local
             'key' => $key,
             'secret' => $secret
         ];
@@ -32,8 +55,6 @@ class ShopController extends Controller
         $novedades = collect();
         $recomendados = collect();
 
-        $regionName = 'Internacionales';
-        
         // Solo cargamos novedades y recomendados en la portada (sin búsqueda y página 1)
         if (!$request->filled('search') && $page == 1) {
             $novedades = Cache::remember('shop_novedades_' . date('Y'), 3600, function () use ($key, $secret) {
@@ -48,28 +69,6 @@ class ShopController extends Controller
                     return [];
                 }
             });
-
-            // Detectar país por el idioma del navegador
-            $lang = substr($request->server('HTTP_ACCEPT_LANGUAGE', 'es'), 0, 2);
-            $countryMap = [
-                'es' => 'Spain',
-                'en' => 'UK', 
-                'fr' => 'France',
-                'it' => 'Italy',
-                'de' => 'Germany',
-                'pt' => 'Brazil'
-            ];
-            $country = $countryMap[$lang] ?? 'US';
-            $regionMap = [
-                'Spain' => 'de España',
-                'UK' => 'del Reino Unido',
-                'France' => 'de Francia',
-                'Italy' => 'de Italia',
-                'Germany' => 'de Alemania',
-                'Brazil' => 'de Brasil',
-                'US' => 'de Estados Unidos'
-            ];
-            $regionName = $regionMap[$country] ?? 'Internacionales';
 
             $recomendados = Cache::remember('shop_recomendados_' . $country, 3600, function () use ($country, $key, $secret) {
                 try {
@@ -87,8 +86,12 @@ class ShopController extends Controller
 
         if ($request->filled('search')) {
             $params['q'] = $request->search;
-        } else {
-            $params['year'] = date('Y') - 1; // El catálogo mostrará el año anterior por defecto para no pisar las novedades
+        } elseif (!$request->filled('genre')) {
+            $params['year'] = date('Y') - 1; // El catálogo mostrará el año anterior por defecto si no hay búsqueda ni filtro
+        }
+
+        if ($request->filled('genre')) {
+            $params['genre'] = $request->genre;
         }
 
         $cacheKey = 'discogs_search_' . md5(json_encode($params));
@@ -102,7 +105,8 @@ class ShopController extends Controller
                 if ($response->successful()) {
                     $data = $response->json();
                     $totalItems = min($data['pagination']['items'] ?? 0, 10000);
-                    $products = $this->formatDiscogsResults($data['results'], false, $key, $secret)->toArray();
+                    // IMPORTANTE: Cambiamos a true para que traiga los precios y se puedan comprar
+                    $products = $this->formatDiscogsResults($data['results'], true, $key, $secret)->toArray();
                     return ['products' => $products, 'total' => $totalItems];
                 }
                 
@@ -114,6 +118,14 @@ class ShopController extends Controller
         }
 
         $products = collect($cachedData['products']);
+        
+        // Filtro de solo disponibles
+        if ($request->has('disponibles')) {
+            $products = $products->filter(function($p) {
+                return $p['price'] > 0;
+            });
+        }
+
         $totalItems = $cachedData['total'];
         
         $paginator = new LengthAwarePaginator(
@@ -147,6 +159,13 @@ class ShopController extends Controller
         }
         
         foreach ($results as $item) {
+            $coverUrl = $item['cover_image'] ?? null;
+            
+            // Si no tiene portada o es la imagen por defecto de Discogs vacía, lo saltamos
+            if (!$coverUrl || str_contains((string)$coverUrl, 'spacer.gif')) {
+                continue;
+            }
+
             $price = 0;
             $artist = 'Artista Desconocido';
             
